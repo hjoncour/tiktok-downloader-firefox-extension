@@ -5,7 +5,7 @@ const App: React.FC = () => {
   const pageTitle = document.title;
   return (
     <div>
-      <strong>Page:</strong> {pageTitle}
+      {/*<strong>Page:</strong> {pageTitle}*/}
     </div>
   );
 };

@@ -3,74 +3,111 @@ import * as ReactDOM from 'react-dom';
 import browser from 'webextension-polyfill';
 import './styles/popup.css';
 
-// Regex to match TikTok video URLs.
-const tiktokUrlRegex = /^https:\/\/www\.tiktok\.com\/.+\/video\/\d+/;
+// Regex to match TikTok video URLs, capturing @username and video ID.
+const tiktokUrlRegex = /^https:\/\/www\.tiktok\.com\/(@[^/]+)\/video\/(\d+)/;
 
 const Popup: React.FC = () => {
   const [title, setTitle] = React.useState('Loading...');
-  const [scrollStatus, setScrollStatus] = React.useState('');
   const [activeUrl, setActiveUrl] = React.useState('');
   const [bookmarks, setBookmarks] = React.useState<string[]>([]);
+  const [scrollStatus, setScrollStatus] = React.useState<'idle' | 'scrolling' | 'paused'>('idle');
+  const [timeRemaining, setTimeRemaining] = React.useState(0);
 
-  // On mount: get active tab info and load bookmarks from storage.
+  // On mount: get active tab info, load bookmarks, listen for content-script updates
   React.useEffect(() => {
+    // 1) Get active tab
     browser.tabs.query({ active: true, currentWindow: true })
       .then(tabs => {
         if (tabs.length > 0) {
           const tab = tabs[0];
-          if (tab.title) {
-            setTitle(tab.title);
-          }
-          if (tab.url) {
-            setActiveUrl(tab.url);
-          }
+          if (tab.title) setTitle(tab.title);
+          if (tab.url) setActiveUrl(tab.url);
         }
       })
-      .catch(err => {
-        console.error('Error fetching tab info:', err);
-        setTitle('Error fetching title');
-      });
+      .catch(err => console.error('Error fetching tab info:', err));
 
+    // 2) Load bookmarks from storage
     browser.storage.local.get("bookmarks")
       .then(data => {
         if (data.bookmarks && Array.isArray(data.bookmarks)) {
           setBookmarks(data.bookmarks);
         }
       })
-      .catch(err => {
-        console.error("Error loading bookmarks:", err);
-      });
+      .catch(err => console.error("Error loading bookmarks:", err));
+
+    // 3) Listen for timeRemaining updates from content script
+    const handleMessage = (message: any) => {
+      if (message.type === 'scrollTimeUpdate') {
+        setTimeRemaining(message.timeRemaining);
+      }
+    };
+    browser.runtime.onMessage.addListener(handleMessage);
+
+    // Cleanup listener on unmount
+    return () => {
+      browser.runtime.onMessage.removeListener(handleMessage);
+    };
   }, []);
 
-  // Handler for scrolling
-  const handleScrollClick = () => {
+  // Start scrolling fresh
+  const handleStartScrolling = () => {
     browser.tabs.query({ active: true, currentWindow: true })
       .then(tabs => {
         if (tabs.length > 0 && tabs[0].id) {
-          return browser.tabs.sendMessage(tabs[0].id, { action: "scrollToBottom" });
+          return browser.tabs.sendMessage(tabs[0].id, { action: "startScrolling" });
         }
       })
-      .then(response => {
-        console.log("Response from content script:", response);
-        setScrollStatus("Scrolling started!");
+      .then(() => {
+        setScrollStatus('scrolling');
       })
-      .catch(err => {
-        console.error("Error sending scroll command:", err);
-        setScrollStatus("Error sending scroll command.");
-      });
+      .catch(err => console.error("Error starting scroll:", err));
   };
 
-  // Handler for bookmarking the active URL if it matches the TikTok video pattern.
+  // Stop/Resume scrolling
+  const handleStopResume = () => {
+    if (scrollStatus === 'scrolling') {
+      // Stop
+      browser.tabs.query({ active: true, currentWindow: true })
+        .then(tabs => {
+          if (tabs.length > 0 && tabs[0].id) {
+            return browser.tabs.sendMessage(tabs[0].id, { action: "stopScrolling" });
+          }
+        })
+        .then(() => {
+          setScrollStatus('paused');
+        })
+        .catch(err => console.error("Error stopping scroll:", err));
+    } else if (scrollStatus === 'paused') {
+      // Resume
+      browser.tabs.query({ active: true, currentWindow: true })
+        .then(tabs => {
+          if (tabs.length > 0 && tabs[0].id) {
+            return browser.tabs.sendMessage(tabs[0].id, { action: "resumeScrolling" });
+          }
+        })
+        .then(() => {
+          setScrollStatus('scrolling');
+        })
+        .catch(err => console.error("Error resuming scroll:", err));
+    }
+  };
+
+  // Bookmark the current TikTok URL
   const handleBookmarkClick = () => {
-    if (!activeUrl.match(tiktokUrlRegex)) {
+    const match = tiktokUrlRegex.exec(activeUrl);
+    if (!match) {
       alert("This page URL does not match the TikTok video pattern.");
       return;
     }
-    if (bookmarks.includes(activeUrl)) {
+    const username = match[1];  // e.g. @oldschoolrevengance
+    const videoId = match[2];   // e.g. 7455409795361803542
+    const bookmarkName = `${username} - ${videoId}`;
+
+    if (bookmarks.includes(bookmarkName)) {
       alert("This URL is already bookmarked.");
       return;
     }
-    const updatedBookmarks = [...bookmarks, activeUrl];
+    const updatedBookmarks = [...bookmarks, bookmarkName];
     browser.storage.local.set({ bookmarks: updatedBookmarks })
       .then(() => {
         setBookmarks(updatedBookmarks);
@@ -80,16 +117,14 @@ const Popup: React.FC = () => {
       });
   };
 
-  // Handler for deleting a bookmark.
-  const handleDeleteBookmark = (urlToDelete: string) => {
-    const updatedBookmarks = bookmarks.filter(url => url !== urlToDelete);
+  // Delete a bookmark from the list
+  const handleDeleteBookmark = (bookmark: string) => {
+    const updatedBookmarks = bookmarks.filter(b => b !== bookmark);
     browser.storage.local.set({ bookmarks: updatedBookmarks })
       .then(() => {
         setBookmarks(updatedBookmarks);
       })
-      .catch(err => {
-        console.error("Error deleting bookmark:", err);
-      });
+      .catch(err => console.error("Error deleting bookmark:", err));
   };
 
   return (
@@ -97,30 +132,49 @@ const Popup: React.FC = () => {
       <div>
         <strong>Page:</strong> {title}
       </div>
-      <div className="buttons">
-        <button onClick={handleScrollClick}>Scroll to Bottom</button>
-        <button onClick={handleBookmarkClick} title="Bookmark this video" className="bookmark-button">
-          {/* Bookmark Icon SVG */}
-          <svg viewBox="0 0 24 24" width="24" height="24">
-            <path d="M6 2a2 2 0 0 0-2 2v18l8-5.333L20 22V4a2 2 0 0 0-2-2z" fill="currentColor"></path>
-          </svg>
+
+      {/* Scrolling controls */}
+      <div style={{ marginTop: '10px' }}>
+        <button onClick={handleStartScrolling}>Start Scrolling</button>
+        <button onClick={handleStopResume} style={{ marginLeft: '5px' }}>
+          {scrollStatus === 'scrolling'
+            ? 'Stop'
+            : scrollStatus === 'paused'
+            ? 'Resume'
+            : 'Stop/Resume'
+          }
         </button>
       </div>
-      {scrollStatus && <div>{scrollStatus}</div>}
-      <div className="bookmark-list">
+
+      {/* Countdown display */}
+      {scrollStatus !== 'idle' && (
+        <div style={{ marginTop: '10px' }}>
+          Time until next scroll: {timeRemaining} seconds
+        </div>
+      )}
+
+      {/* Bookmarking */}
+      <div style={{ marginTop: '15px' }}>
+        <button onClick={handleBookmarkClick}>
+          Bookmark this TikTok
+        </button>
+      </div>
+
+      {/* Bookmark list */}
+      <div className="bookmark-list" style={{ marginTop: '15px' }}>
         <h3>Bookmarks</h3>
         {bookmarks.length === 0 && <div>No bookmarks yet.</div>}
-        <ul>
-          {bookmarks.map((url, index) => (
-            <li key={index}>
-              <button onClick={() => handleDeleteBookmark(url)} className="delete-button" title="Delete bookmark">
-                {/* Cross Icon SVG */}
-                <svg viewBox="0 0 24 24" width="16" height="16">
-                  <line x1="18" y1="6" x2="6" y2="18" stroke="currentColor" strokeWidth="2"/>
-                  <line x1="6" y1="6" x2="18" y2="18" stroke="currentColor" strokeWidth="2"/>
-                </svg>
+        <ul style={{ padding: 0, margin: 0 }}>
+          {bookmarks.map((bookmark, index) => (
+            <li key={index} style={{ marginBottom: '5px', listStyle: 'none', display: 'flex', alignItems: 'center' }}>
+              <button
+                onClick={() => handleDeleteBookmark(bookmark)}
+                title="Delete bookmark"
+                style={{ marginRight: '5px', cursor: 'pointer' }}
+              >
+                X
               </button>
-              <a href={url} target="_blank" rel="noopener noreferrer">{url}</a>
+              <span>{bookmark}</span>
             </li>
           ))}
         </ul>
