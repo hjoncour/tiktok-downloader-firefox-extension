@@ -2,18 +2,52 @@ body {
   margin: 0;
   padding: 10px;
   font-family: sans-serif;
-  min-width: 200px;
-  min-height: 100px;
   background: #fff;
 }
 
 .popup-content {
   font-size: 16px;
+  min-width: 250px;
+  min-height: 150px;
 }
 
-button {
+.buttons {
   margin-top: 10px;
-  padding: 8px 12px;
-  font-size: 14px;
+  display: flex;
+  gap: 10px;
+}
+
+.bookmark-button {
+  background: transparent;
+  border: none;
   cursor: pointer;
+  padding: 0;
+}
+
+.bookmark-list {
+  margin-top: 15px;
+}
+
+.bookmark-list h3 {
+  margin: 0 0 5px 0;
+  font-size: 16px;
+}
+
+.bookmark-list ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.bookmark-list li {
+  display: flex;
+  align-items: center;
+  margin-bottom: 5px;
+}
+
+.delete-button {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  margin-right: 5px;
 }
