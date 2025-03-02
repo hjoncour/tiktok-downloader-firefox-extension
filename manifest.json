@@ -1,15 +1,18 @@
 {
   "manifest_version": 2,
-  "name": "Page Title & Scroll Displayer",
+  "name": "My Extension",
   "version": "1.0",
-  "description": "Displays the page title and includes a button to scroll to the bottom of pages.",
-  "permissions": ["tabs", "<all_urls>"],
+  "description": "Displays a popup with bookmarks and more.",
+  "permissions": [
+    "tabs",
+    "storage",
+    "<all_urls>"
+  ],
   "browser_action": {
     "default_popup": "popup.html",
     "default_icon": {
       "16": "icons/icon.png",
-      "48": "icons/icon.png",
-      "128": "icons/icon.png"
+      "48": "icons/icon.png"
     }
   },
   "icons": {
