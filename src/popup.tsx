@@ -1,7 +1,7 @@
 import * as React from 'react';
 import * as ReactDOM from 'react-dom';
 import browser from 'webextension-polyfill';
-import './styles/popup.css'; // Import CSS so webpack includes it (if using style-loader/css-loader)
+import './styles/popup.css';
 
 const Popup: React.FC = () => {
   const [title, setTitle] = React.useState('Loading...');
