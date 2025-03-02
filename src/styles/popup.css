@@ -1,0 +1,17 @@
+html, body {
+    margin: 0;
+    padding: 0;
+    background-color: #fff;
+    color: #000;
+    font-family: sans-serif;
+    /* Minimum size so the popup isn't "micro" */
+    min-width: 200px;
+    min-height: 60px;
+  }
+  
+  /* A class for your main React container */
+  .popup-content {
+    padding: 10px;
+    font-size: 16px;
+  }
+  
