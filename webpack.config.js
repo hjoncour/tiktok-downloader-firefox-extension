@@ -1,9 +1,12 @@
 const path = require('path');
 
 module.exports = {
-  entry: './src/popup.tsx',
+  entry: {
+    popup: './src/popup.tsx',
+    content: './src/content.ts'
+  },
   output: {
-    filename: 'popup.js',
+    filename: '[name].js', // Will output popup.js and content.js in the dist folder
     path: path.resolve(__dirname, 'dist')
   },
   resolve: {
@@ -19,8 +22,8 @@ module.exports = {
       {
         test: /\.css$/,
         use: [
-          'style-loader',  // 1) Injects CSS into the DOM
-          'css-loader'     // 2) Turns CSS into valid JS modules
+          'style-loader', // Injects CSS into the DOM
+          'css-loader'    // Translates CSS into modules
         ]
       }
     ]

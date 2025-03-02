@@ -1,14 +1,25 @@
 {
   "manifest_version": 2,
-  "name": "Page Title Displayer",
+  "name": "Page Title & Scroll Displayer",
   "version": "1.0",
-  "description": "Displays the current page's title using a browser action popup.",
-  "permissions": [
-    "tabs",
-    "<all_urls>"
-  ],
+  "description": "Displays the page title and includes a button to scroll to the bottom of pages.",
+  "permissions": ["tabs", "<all_urls>"],
   "browser_action": {
     "default_popup": "popup.html",
-    "default_icon": "icons/icon.png"
-  }
+    "default_icon": {
+      "16": "icons/icon.png",
+      "48": "icons/icon.png",
+      "128": "icons/icon.png"
+    }
+  },
+  "icons": {
+    "48": "icons/icon.png"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["dist/content.js"],
+      "run_at": "document_end"
+    }
+  ]
 }
