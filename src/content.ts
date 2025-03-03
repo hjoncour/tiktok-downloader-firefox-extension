@@ -3,13 +3,13 @@ import browser from 'webextension-polyfill';
 console.log("Content script loaded.");
 
 /**
- * We keep a global state to manage scrolling. 
- * - scrolling: whether we are actively scrolling or not
+ * Global state for scrolling:
+ * - scrolling: whether scrolling is active
  * - lastHeight: last recorded scroll height
- * - lastChangeTime: timestamp of the last time the height changed
- * - scrollCount: how many scroll steps have happened
- * - timeRemaining: how many seconds until the next scroll step
- * - checkIntervalId: the ID of the setInterval that ticks every second
+ * - lastChangeTime: timestamp when height last changed
+ * - scrollCount: number of scroll steps
+ * - timeRemaining: seconds until the next scroll step
+ * - checkIntervalId: ID for the interval that ticks every second
  */
 let scrolling = false;
 let lastHeight = 0;
@@ -36,7 +36,7 @@ function initScrollVars() {
  *   - if timeRemaining = 0, we do the next scroll step
  */
 function startScrolling() {
-  if (scrolling) return; // already scrolling
+  if (scrolling) return;
   scrolling = true;
 
   // If there's no interval yet, create one
@@ -53,13 +53,10 @@ function stopScrolling() {
 /** Called once per second while scrolling is active. */
 function onTick() {
   if (!scrolling) return;
-
   if (timeRemaining > 0) {
-    // Decrement and broadcast
     timeRemaining--;
     sendTimeUpdate(timeRemaining);
   } else {
-    // Time for the next scroll step
     doScrollStep();
   }
 }
@@ -90,27 +87,38 @@ function doScrollStep() {
   sendTimeUpdate(timeRemaining);
 }
 
-/** Send a message to the popup with the updated countdown. */
-function sendTimeUpdate(sec: number) {
-  browser.runtime.sendMessage({ type: 'scrollTimeUpdate', timeRemaining: sec })
-    .catch(() => {
-      // If the popup is closed, this can fail. Safe to ignore.
-    });
+function scrollToBottom() {
+  const currentHeight = document.documentElement.scrollHeight;
+  window.scrollTo(0, currentHeight);
 }
 
-/** Listen for messages from the popup to start/stop/resume scrolling. */
-browser.runtime.onMessage.addListener((message: any) => {
+function sendTimeUpdate(sec: number) {
+  browser.runtime.sendMessage({ type: 'scrollTimeUpdate', timeRemaining: sec })
+    .catch(() => { /* safe to ignore if popup is closed */ });
+}
+
+// Single consolidated message listener that always returns true.
+browser.runtime.onMessage.addListener((message: any, _sender, sendResponse) => {
   if (message.action === "startScrolling") {
     initScrollVars();
     startScrolling();
-    return Promise.resolve({ status: "Scrolling started" });
-  }
-  if (message.action === "stopScrolling") {
+    sendResponse({ status: "Scrolling started" });
+  } else if (message.action === "stopScrolling") {
     stopScrolling();
-    return Promise.resolve({ status: "Scrolling stopped" });
-  }
-  if (message.action === "resumeScrolling") {
+    sendResponse({ status: "Scrolling stopped" });
+  } else if (message.action === "resumeScrolling") {
     startScrolling();
-    return Promise.resolve({ status: "Scrolling resumed" });
+    sendResponse({ status: "Scrolling resumed" });
+  } else if (message.action === "scrollToBottom") {
+    scrollToBottom();
+    sendResponse({ status: "Scrolling started" });
+  } else if (message.action === "collectAllVideoLinks") {
+    const allLinks = Array.from(document.querySelectorAll<HTMLAnchorElement>("a"));
+    const matchedLinks = allLinks
+      .map(a => a.href)
+      .filter(href => /^https:\/\/www\.tiktok\.com\/[^/]+\/video\/\d+/.test(href));
+    sendResponse({ links: matchedLinks });
   }
+  // Always return true to indicate that sendResponse will be called asynchronously.
+  return true;
 });
