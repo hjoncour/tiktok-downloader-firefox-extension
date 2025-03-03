@@ -18,9 +18,63 @@ let scrollCount = 0;
 let timeRemaining = 0;
 let checkIntervalId: number | null = null;
 
+/** 
+ * Global states for "select bookmarks" mode 
+ */
+let selectionMode = false;
+const selectedAnchors = new Set<HTMLAnchorElement>();
+
 /**
- * Initialize scroll-related variables.
- * Called whenever we "startScrolling" fresh.
+ * Insert custom CSS for a white overlay on selected anchors
+ * We'll do this once when the script loads.
+ */
+(function injectSelectionCSS() {
+  const style = document.createElement('style');
+  style.textContent = `
+    .my-ext-selected {
+      position: relative;
+      outline: 2px solid white; /* optional visible border */
+    }
+    .my-ext-selected::after {
+      content: "";
+      position: absolute;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(255,255,255,0.5);
+      pointer-events: none;
+    }
+  `;
+  document.head.appendChild(style);
+})();
+
+/**
+ * On any click, if selectionMode is ON, toggle selection for anchors that
+ * match the TikTok video pattern: https://www.tiktok.com/@.../video/...
+ */
+document.addEventListener('click', (e) => {
+  if (!selectionMode) return;
+
+  const target = e.target as HTMLElement;
+  const anchor = target.closest('a') as HTMLAnchorElement | null;
+  if (!anchor) return;
+
+  // Check if anchor is a TikTok video link
+  const href = anchor.href;
+  if (/^https:\/\/www\.tiktok\.com\/[^/]+\/video\/\d+/.test(href)) {
+    e.preventDefault(); // don't navigate
+    e.stopPropagation(); 
+    // Toggle selection
+    if (selectedAnchors.has(anchor)) {
+      selectedAnchors.delete(anchor);
+      anchor.classList.remove('my-ext-selected');
+    } else {
+      selectedAnchors.add(anchor);
+      anchor.classList.add('my-ext-selected');
+    }
+  }
+});
+
+/** 
+ * SCROLLING LOGIC (unchanged from your code, just consolidated)
  */
 function initScrollVars() {
   lastHeight = document.documentElement.scrollHeight;
@@ -94,7 +148,7 @@ function scrollToBottom() {
 
 function sendTimeUpdate(sec: number) {
   browser.runtime.sendMessage({ type: 'scrollTimeUpdate', timeRemaining: sec })
-    .catch(() => { /* safe to ignore if popup is closed */ });
+    .catch(() => {});
 }
 
 // Single consolidated message listener that always returns true.
@@ -111,14 +165,31 @@ browser.runtime.onMessage.addListener((message: any, _sender, sendResponse) => {
     sendResponse({ status: "Scrolling resumed" });
   } else if (message.action === "scrollToBottom") {
     scrollToBottom();
-    sendResponse({ status: "Scrolling started" });
-  } else if (message.action === "collectAllVideoLinks") {
+    sendResponse({ status: "Scrolling once" });
+  } 
+  // "Bookmark all" approach from before
+  else if (message.action === "collectAllVideoLinks") {
     const allLinks = Array.from(document.querySelectorAll<HTMLAnchorElement>("a"));
     const matchedLinks = allLinks
       .map(a => a.href)
       .filter(href => /^https:\/\/www\.tiktok\.com\/[^/]+\/video\/\d+/.test(href));
     sendResponse({ links: matchedLinks });
   }
-  // Always return true to indicate that sendResponse will be called asynchronously.
-  return true;
+  // NEW: "Select bookmarks" mode
+  else if (message.action === "startSelectionMode") {
+    selectionMode = true;
+    selectedAnchors.clear();
+    sendResponse({ status: "Selection mode started" });
+  } 
+  else if (message.action === "validateSelection") {
+    // Gather the href from all selected anchors
+    const links = Array.from(selectedAnchors).map(a => a.href);
+    // Remove the overlay class
+    selectedAnchors.forEach(a => a.classList.remove('my-ext-selected'));
+    selectedAnchors.clear();
+    selectionMode = false;
+    sendResponse({ status: "Selection validated", links });
+  }
+
+  return true; // always return true for async responses
 });
