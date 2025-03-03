@@ -3,8 +3,11 @@ import * as ReactDOM from 'react-dom';
 import browser from 'webextension-polyfill';
 import './styles/popup.css';
 
-// Regex to match TikTok video URLs
-const tiktokUrlRegex = /^https:\/\/www\.tiktok\.com\/(@[^/]+)\/video\/(\d+)/;
+/**
+ * Matches a TikTok video URL in the format:
+ *   https://www.tiktok.com/anyUserId/anySegment/videoId
+ */
+const tiktokVideoRegex = /^https:\/\/www\.tiktok\.com\/[^/]+\/[^/]+\/\d+/;
 
 const Popup: React.FC = () => {
   const [title, setTitle] = React.useState('Loading...');
@@ -14,7 +17,7 @@ const Popup: React.FC = () => {
   const [timeRemaining, setTimeRemaining] = React.useState(0);
 
   React.useEffect(() => {
-    // 1) Get active tab
+    // 1) Get active tab info
     browser.tabs.query({ active: true, currentWindow: true })
       .then(tabs => {
         if (tabs.length > 0) {
@@ -34,7 +37,7 @@ const Popup: React.FC = () => {
       })
       .catch(err => console.error("Error loading bookmarks:", err));
 
-    // 3) Listen for timeRemaining updates from content script
+    // 3) Listen for timeRemaining updates
     const handleMessage = (message: any) => {
       if (message.type === 'scrollTimeUpdate') {
         setTimeRemaining(message.timeRemaining);
@@ -47,12 +50,19 @@ const Popup: React.FC = () => {
     };
   }, []);
 
+  /** 
+   * Evaluate conditions for dynamic button display
+   */
+  const isTikTokDomain = activeUrl.startsWith("https://www.tiktok.com");
+  const isVideoPage = tiktokVideoRegex.test(activeUrl);
+
   // Start scrolling
   const handleStartScrolling = () => {
     browser.tabs.query({ active: true, currentWindow: true })
       .then(tabs => {
-        if (tabs[0]?.id != null) {
-          return browser.tabs.sendMessage(tabs[0].id, { action: "startScrolling" });
+        const tabId = tabs[0]?.id;
+        if (tabId != null) {
+          return browser.tabs.sendMessage(tabId, { action: "startScrolling" });
         }
       })
       .then(() => setScrollStatus('scrolling'))
@@ -61,52 +71,45 @@ const Popup: React.FC = () => {
 
   // Stop or Resume scrolling
   const handleStopResume = () => {
-    if (scrollStatus === 'scrolling') {
-      browser.tabs.query({ active: true, currentWindow: true })
-        .then(tabs => {
-          if (tabs[0]?.id != null) {
-            return browser.tabs.sendMessage(tabs[0].id, { action: "stopScrolling" });
-          }
-        })
-        .then(() => setScrollStatus('paused'))
-        .catch(err => console.error("Error stopping scroll:", err));
-    } else if (scrollStatus === 'paused') {
-      browser.tabs.query({ active: true, currentWindow: true })
-        .then(tabs => {
-          if (tabs[0]?.id != null) {
-            return browser.tabs.sendMessage(tabs[0].id, { action: "resumeScrolling" });
-          }
-        })
-        .then(() => setScrollStatus('scrolling'))
-        .catch(err => console.error("Error resuming scroll:", err));
-    }
+    browser.tabs.query({ active: true, currentWindow: true })
+      .then(tabs => {
+        const tabId = tabs[0]?.id;
+        if (tabId == null) return;
+
+        if (scrollStatus === 'scrolling') {
+          return browser.tabs.sendMessage(tabId, { action: "stopScrolling" })
+            .then(() => setScrollStatus('paused'));
+        } else if (scrollStatus === 'paused') {
+          return browser.tabs.sendMessage(tabId, { action: "resumeScrolling" })
+            .then(() => setScrollStatus('scrolling'));
+        }
+      })
+      .catch(err => console.error("Error in stop/resume scrolling:", err));
   };
 
-  // Bookmark the current page if it matches the pattern
+  // Bookmark single video
   const handleBookmarkClick = () => {
-    const match = tiktokUrlRegex.exec(activeUrl);
-    if (!match) {
-      alert("This page URL does not match the TikTok video pattern.");
+    if (!isVideoPage) {
+      alert("Not a valid TikTok video page.");
       return;
     }
-    const [_, username, videoId] = match;
-    const bookmarkName = `${username} - ${videoId}`;
-    if (bookmarks.includes(bookmarkName)) {
+    if (bookmarks.includes(activeUrl)) {
       alert("This URL is already bookmarked.");
       return;
     }
-    const updated = [...bookmarks, bookmarkName];
+    const updated = [...bookmarks, activeUrl];
     browser.storage.local.set({ bookmarks: updated })
       .then(() => setBookmarks(updated))
       .catch(err => console.error("Error saving bookmark:", err));
   };
 
-  // "Bookmark All Videos" approach
+  // Bookmark all videos on the current page
   const handleBookmarkAll = () => {
     browser.tabs.query({ active: true, currentWindow: true })
       .then(tabs => {
-        if (tabs[0]?.id != null) {
-          return browser.tabs.sendMessage(tabs[0].id, { action: "collectAllVideoLinks" });
+        const tabId = tabs[0]?.id;
+        if (tabId != null) {
+          return browser.tabs.sendMessage(tabId, { action: "collectAllVideoLinks" });
         }
       })
       .then(response => {
@@ -116,13 +119,8 @@ const Popup: React.FC = () => {
 
         const newBookmarks: string[] = [];
         res.links.forEach(url => {
-          const m = tiktokUrlRegex.exec(url);
-          if (m) {
-            const [_, username, videoId] = m;
-            const bm = `${username} - ${videoId}`;
-            if (!bookmarks.includes(bm) && !newBookmarks.includes(bm)) {
-              newBookmarks.push(bm);
-            }
+          if (!bookmarks.includes(url) && !newBookmarks.includes(url)) {
+            newBookmarks.push(url);
           }
         });
         const updated = [...bookmarks, ...newBookmarks];
@@ -133,107 +131,84 @@ const Popup: React.FC = () => {
       .catch(err => console.error("Error collecting video links:", err));
   };
 
-  // NEW: Start selection mode
-  const handleSelectBookmarks = () => {
-    browser.tabs.query({ active: true, currentWindow: true })
-      .then(tabs => {
-        if (tabs[0]?.id != null) {
-          return browser.tabs.sendMessage(tabs[0].id, { action: "startSelectionMode" });
-        }
-      })
-      .catch(err => console.error("Error starting selection mode:", err));
+  // Clear all bookmarks
+  const handleClearSelection = () => {
+    browser.storage.local.set({ bookmarks: [] })
+      .then(() => setBookmarks([]))
+      .catch(err => console.error("Error clearing bookmarks:", err));
   };
 
-  // NEW: Validate selection => get all selected links, add to bookmarks
-  const handleValidateSelection = () => {
-    browser.tabs.query({ active: true, currentWindow: true })
-      .then(tabs => {
-        if (tabs[0]?.id != null) {
-          return browser.tabs.sendMessage(tabs[0].id, { action: "validateSelection" });
-        }
-      })
-      .then(response => {
-        if (!response) return;
-        const res = response as { status: string; links: string[] };
-        if (!res.links) return;
-
-        const newBookmarks: string[] = [];
-        res.links.forEach(url => {
-          const m = tiktokUrlRegex.exec(url);
-          if (m) {
-            const [_, username, videoId] = m;
-            const bm = `${username} - ${videoId}`;
-            if (!bookmarks.includes(bm) && !newBookmarks.includes(bm)) {
-              newBookmarks.push(bm);
-            }
-          }
-        });
-        const updated = [...bookmarks, ...newBookmarks];
-        browser.storage.local.set({ bookmarks: updated })
-          .then(() => setBookmarks(updated))
-          .catch(err => console.error("Error saving selection:", err));
-      })
-      .catch(err => console.error("Error validating selection:", err));
-  };
-
-  // Delete a bookmark from the list
-  const handleDelete = (bm: string) => {
-    const updated = bookmarks.filter(b => b !== bm);
+  // Remove an individual bookmark
+  const handleRemoveBookmark = (bm: string) => {
+    const updated = bookmarks.filter(item => item !== bm);
     browser.storage.local.set({ bookmarks: updated })
       .then(() => setBookmarks(updated))
-      .catch(err => console.error("Error deleting bookmark:", err));
+      .catch(err => console.error("Error removing bookmark:", err));
   };
 
   return (
     <div className="popup-content">
-      <div><strong>Page:</strong> {title}</div>
+      {/* Clear selection button at the top */}
+      <button onClick={handleClearSelection} style={{ marginBottom: '10px' }}>
+        Clear selection
+      </button>
 
-      {/* Scrolling */}
-      <div style={{ marginTop: '10px' }}>
-        <button onClick={handleStartScrolling}>Start Scrolling</button>
-        <button onClick={handleStopResume} style={{ marginLeft: '5px' }}>
-          {scrollStatus === 'scrolling' ? 'Stop' 
-            : scrollStatus === 'paused' ? 'Resume' 
-            : 'Stop/Resume'}
-        </button>
+      <div>
+        <strong>Page Status:</strong> {scrollStatus} | {activeUrl}
       </div>
+
+      {/* Show Start Scrolling only if on TikTok domain, not a single video, and idle */}
+      {isTikTokDomain && !isVideoPage && scrollStatus === 'idle' && (
+        <button onClick={handleStartScrolling} style={{ marginTop: '10px' }}>
+          Start Scrolling
+        </button>
+      )}
+
+      {/* Show Stop/Resume only if on TikTok domain and not idle */}
+      {isTikTokDomain && scrollStatus !== 'idle' && (
+        <button onClick={handleStopResume} style={{ marginTop: '10px' }}>
+          {scrollStatus === 'scrolling' ? 'Stop Scrolling' : 'Resume Scrolling'}
+        </button>
+      )}
+
+      {/* If currently scrolling or paused, show time remaining */}
       {scrollStatus !== 'idle' && (
         <div style={{ marginTop: '10px' }}>
           Time until next scroll: {timeRemaining} seconds
         </div>
       )}
 
-      {/* Bookmarking */}
-      <div style={{ marginTop: '15px' }}>
-        <button onClick={handleBookmarkClick}>Bookmark this TikTok</button>
-        <button onClick={handleBookmarkAll} style={{ marginLeft: '5px' }}>
+      {/* If it's a single video page, show "Bookmark this Tiktok" */}
+      {isTikTokDomain && isVideoPage && (
+        <button onClick={handleBookmarkClick} style={{ marginTop: '10px', marginRight: '5px' }}>
+          Bookmark this Tiktok
+        </button>
+      )}
+
+      {/* If on TikTok domain but NOT a single video page, show "Bookmark All Videos" */}
+      {isTikTokDomain && !isVideoPage && (
+        <button onClick={handleBookmarkAll} style={{ marginTop: '10px' }}>
           Bookmark All Videos
         </button>
-      </div>
+      )}
 
-      {/* NEW: Selection Mode */}
-      <div style={{ marginTop: '15px' }}>
-        <button onClick={handleSelectBookmarks}>Select bookmarks</button>
-        <button onClick={handleValidateSelection} style={{ marginLeft: '5px' }}>
-          Validate selection
-        </button>
-      </div>
+      <h3 style={{ marginTop: '15px' }}>Bookmarks</h3>
+      {bookmarks.length === 0 && <div>No bookmarks yet.</div>}
 
-      {/* Bookmarks list */}
-      <div style={{ marginTop: '15px' }}>
-        <h3>Bookmarks</h3>
-        {bookmarks.length === 0 && <div>No bookmarks yet.</div>}
-        <ul style={{ listStyle: 'none', padding: 0 }}>
-          {bookmarks.map((bm, i) => (
-            <li key={i} style={{ marginBottom: '5px', display: 'flex', alignItems: 'center' }}>
-              <button onClick={() => handleDelete(bm)} style={{ marginRight: '8px' }}>
-                X
-              </button>
-              <span>{bm}</span>
-            </li>
-          ))}
-        </ul>
-      </div>
+      <ul style={{ listStyle: 'none', padding: 0 }}>
+        {bookmarks.map((bm, idx) => (
+          <li key={idx} style={{ marginBottom: '5px', display: 'flex', alignItems: 'center' }}>
+            {/* Remove button for each item */}
+            <button
+              onClick={() => handleRemoveBookmark(bm)}
+              style={{ marginRight: '8px' }}
+            >
+              X
+            </button>
+            <span>{bm}</span>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 };
