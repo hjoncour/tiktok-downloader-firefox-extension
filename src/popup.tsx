@@ -1,12 +1,12 @@
 import * as React from 'react';
 import * as ReactDOM from 'react-dom';
-import './styles/popup.css';
-import { Sun, Moon } from 'lucide-react';
+import { Sun, Moon, Download } from 'lucide-react';
 import browser from 'webextension-polyfill';
 import { useActiveTab } from './hooks/useActiveTab';
 import { useBookmarks } from './hooks/useBookmarks';
 import { useScrolling } from './hooks/useScrolling';
 import { useSelectionMode } from './hooks/useSelectionMode';
+import './styles/popup.css';
 
 const tiktokVideoRegex = /^https:\/\/www\.tiktok\.com\/[^/]+\/[^/]+\/\d+/;
 
@@ -48,20 +48,38 @@ const Popup: React.FC = () => {
       .catch(err => console.error("Error collecting video links:", err));
   };
 
+  // New function to handle Download button click
+  const handleDownloadClick = () => {
+    // Open the React website
+    browser.tabs.create({ url: 'https://tiktokze.com' })
+      .then(tab => {
+        // Delay sending data to allow the page to load
+        setTimeout(() => {
+          if (tab.id != null) {
+            browser.tabs.sendMessage(tab.id, { action: 'extensionData', payload: bookmarks })
+              .catch(err => console.error("Error sending bookmarks:", err));
+          }
+        }, 2000); // Adjust delay as needed
+      })
+      .catch(err => console.error("Error opening tiktokze.com:", err));
+  };
+
   return (
     <div className={isDarkMode ? "dark" : ""}>
       <div className="popup-container">
         <div className="top-row">
           {/* Theme toggle button */}
-          <button onClick={toggleTheme} className="btn theme-toggle-button">
+          <button onClick={toggleTheme} className="theme-toggle-button">
             {isDarkMode ? <Sun /> : <Moon />}
           </button>
-
+          {/* New Download button */}
+          <button onClick={handleDownloadClick} className="theme-toggle-button">
+          <Download />
+          </button>
           {/* Clear all bookmarks */}
           <button onClick={clearBookmarks} className="btn">
             Clear selection
           </button>
-
           {/* Scroll start/stop/resume */}
           {isTikTokDomain && !isVideoPage && !isSelecting && scrollStatus === 'idle' && (
             <button onClick={startScrolling} className="btn">
@@ -73,14 +91,12 @@ const Popup: React.FC = () => {
               {scrollStatus === 'scrolling' ? 'Stop' : 'Resume'}
             </button>
           )}
-
           {/* Bookmark single video */}
           {isTikTokDomain && isVideoPage && !isSelecting && (
             <button onClick={handleBookmarkClick} className="btn">
               Bookmark
             </button>
           )}
-
           {/* Bookmark all or enter select mode */}
           {isTikTokDomain && !isVideoPage && !isSelecting && (
             <>
@@ -92,7 +108,6 @@ const Popup: React.FC = () => {
               </button>
             </>
           )}
-
           {/* Selection mode buttons */}
           {isSelecting && (
             <>
