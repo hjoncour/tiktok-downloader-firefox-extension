@@ -4,7 +4,7 @@ import browser from 'webextension-polyfill';
 import './styles/popup.css';
 
 /**
- * Matches a TikTok video URL in the format:
+ * Matches a TikTok video URL:
  *   https://www.tiktok.com/anyUserId/anySegment/videoId
  */
 const tiktokVideoRegex = /^https:\/\/www\.tiktok\.com\/[^/]+\/[^/]+\/\d+/;
@@ -15,6 +15,7 @@ const Popup: React.FC = () => {
   const [bookmarks, setBookmarks] = React.useState<string[]>([]);
   const [scrollStatus, setScrollStatus] = React.useState<'idle' | 'scrolling' | 'paused'>('idle');
   const [timeRemaining, setTimeRemaining] = React.useState(0);
+  const [isSelecting, setIsSelecting] = React.useState(false);
 
   React.useEffect(() => {
     // 1) Get active tab info
@@ -37,7 +38,7 @@ const Popup: React.FC = () => {
       })
       .catch(err => console.error("Error loading bookmarks:", err));
 
-    // 3) Listen for timeRemaining updates
+    // 3) Listen for scroll updates from content script
     const handleMessage = (message: any) => {
       if (message.type === 'scrollTimeUpdate') {
         setTimeRemaining(message.timeRemaining);
@@ -50,13 +51,11 @@ const Popup: React.FC = () => {
     };
   }, []);
 
-  /** 
-   * Evaluate conditions for dynamic button display
-   */
+  // Evaluate conditions once
   const isTikTokDomain = activeUrl.startsWith("https://www.tiktok.com");
   const isVideoPage = tiktokVideoRegex.test(activeUrl);
 
-  // Start scrolling
+  // Scrolling logic
   const handleStartScrolling = () => {
     browser.tabs.query({ active: true, currentWindow: true })
       .then(tabs => {
@@ -69,13 +68,11 @@ const Popup: React.FC = () => {
       .catch(err => console.error("Error starting scroll:", err));
   };
 
-  // Stop or Resume scrolling
   const handleStopResume = () => {
     browser.tabs.query({ active: true, currentWindow: true })
       .then(tabs => {
         const tabId = tabs[0]?.id;
         if (tabId == null) return;
-
         if (scrollStatus === 'scrolling') {
           return browser.tabs.sendMessage(tabId, { action: "stopScrolling" })
             .then(() => setScrollStatus('paused'));
@@ -84,10 +81,10 @@ const Popup: React.FC = () => {
             .then(() => setScrollStatus('scrolling'));
         }
       })
-      .catch(err => console.error("Error in stop/resume scrolling:", err));
+      .catch(err => console.error("Error in stop/resume:", err));
   };
 
-  // Bookmark single video
+  // Bookmark current video page (only for single video pages)
   const handleBookmarkClick = () => {
     if (!isVideoPage) {
       alert("Not a valid TikTok video page.");
@@ -103,7 +100,7 @@ const Popup: React.FC = () => {
       .catch(err => console.error("Error saving bookmark:", err));
   };
 
-  // Bookmark all videos on the current page
+  // "Bookmark All Videos" for non-video pages
   const handleBookmarkAll = () => {
     browser.tabs.query({ active: true, currentWindow: true })
       .then(tabs => {
@@ -146,6 +143,61 @@ const Popup: React.FC = () => {
       .catch(err => console.error("Error removing bookmark:", err));
   };
 
+  // "Select mode" logic
+  const handleSelectModeToggle = () => {
+    if (!isSelecting) {
+      // Start selection mode
+      browser.tabs.query({ active: true, currentWindow: true })
+        .then(tabs => {
+          const tabId = tabs[0]?.id;
+          if (tabId != null) {
+            return browser.tabs.sendMessage(tabId, { action: "startSelectionMode" });
+          }
+        })
+        .then(() => setIsSelecting(true))
+        .catch(err => console.error("Error starting selection mode:", err));
+    } else {
+      // Validate selection: get selected video links from content script
+      browser.tabs.query({ active: true, currentWindow: true })
+        .then(tabs => {
+          const tabId = tabs[0]?.id;
+          if (tabId != null) {
+            return browser.tabs.sendMessage(tabId, { action: "validateSelection" });
+          }
+        })
+        .then(response => {
+          if (!response) return;
+          const res = response as { status: string; links: string[] };
+          if (!res.links) return;
+          const newBookmarks: string[] = [];
+          res.links.forEach(url => {
+            if (!bookmarks.includes(url) && !newBookmarks.includes(url)) {
+              newBookmarks.push(url);
+            }
+          });
+          const updated = [...bookmarks, ...newBookmarks];
+          browser.storage.local.set({ bookmarks: updated })
+            .then(() => setBookmarks(updated))
+            .catch(err => console.error("Error saving selection:", err));
+        })
+        .catch(err => console.error("Error validating selection:", err))
+        .finally(() => setIsSelecting(false));
+    }
+  };
+
+  // Cancel selection mode without adding bookmarks
+  const handleCancelSelection = () => {
+    browser.tabs.query({ active: true, currentWindow: true })
+      .then(tabs => {
+        const tabId = tabs[0]?.id;
+        if (tabId != null) {
+          return browser.tabs.sendMessage(tabId, { action: "cancelSelection" });
+        }
+      })
+      .then(() => setIsSelecting(false))
+      .catch(err => console.error("Error canceling selection:", err));
+  };
+
   return (
     <div className="popup-content">
       {/* Clear selection button at the top */}
@@ -157,52 +209,58 @@ const Popup: React.FC = () => {
         <strong>Page Status:</strong> {scrollStatus} | {activeUrl}
       </div>
 
-      {/* Show Start Scrolling only if on TikTok domain, not a single video, and idle */}
-      {isTikTokDomain && !isVideoPage && scrollStatus === 'idle' && (
+      {/* Scrolling buttons: only for non-video pages and when not in select mode */}
+      {isTikTokDomain && !isVideoPage && !isSelecting && scrollStatus === 'idle' && (
         <button onClick={handleStartScrolling} style={{ marginTop: '10px' }}>
           Start Scrolling
         </button>
       )}
-
-      {/* Show Stop/Resume only if on TikTok domain and not idle */}
-      {isTikTokDomain && scrollStatus !== 'idle' && (
+      {isTikTokDomain && !isVideoPage && !isSelecting && scrollStatus !== 'idle' && (
         <button onClick={handleStopResume} style={{ marginTop: '10px' }}>
           {scrollStatus === 'scrolling' ? 'Stop Scrolling' : 'Resume Scrolling'}
         </button>
       )}
-
-      {/* If currently scrolling or paused, show time remaining */}
       {scrollStatus !== 'idle' && (
         <div style={{ marginTop: '10px' }}>
           Time until next scroll: {timeRemaining} seconds
         </div>
       )}
 
-      {/* If it's a single video page, show "Bookmark this Tiktok" */}
-      {isTikTokDomain && isVideoPage && (
+      {/* Bookmark buttons */}
+      {isTikTokDomain && isVideoPage && !isSelecting && (
         <button onClick={handleBookmarkClick} style={{ marginTop: '10px', marginRight: '5px' }}>
           Bookmark this Tiktok
         </button>
       )}
+      {isTikTokDomain && !isVideoPage && !isSelecting && (
+        <>
+          <button onClick={handleBookmarkAll} style={{ marginTop: '10px' }}>
+            Bookmark All Videos
+          </button>
+          <button onClick={handleSelectModeToggle} style={{ marginTop: '10px', marginLeft: '5px' }}>
+            Select mode
+          </button>
+        </>
+      )}
 
-      {/* If on TikTok domain but NOT a single video page, show "Bookmark All Videos" */}
-      {isTikTokDomain && !isVideoPage && (
-        <button onClick={handleBookmarkAll} style={{ marginTop: '10px' }}>
-          Bookmark All Videos
-        </button>
+      {/* When in selection mode */}
+      {isSelecting && (
+        <div style={{ marginTop: '10px' }}>
+          <button onClick={handleSelectModeToggle} style={{ marginRight: '5px' }}>
+            Validate Selection
+          </button>
+          <button onClick={handleCancelSelection}>
+            Cancel selection
+          </button>
+        </div>
       )}
 
       <h3 style={{ marginTop: '15px' }}>Bookmarks</h3>
       {bookmarks.length === 0 && <div>No bookmarks yet.</div>}
-
       <ul style={{ listStyle: 'none', padding: 0 }}>
         {bookmarks.map((bm, idx) => (
           <li key={idx} style={{ marginBottom: '5px', display: 'flex', alignItems: 'center' }}>
-            {/* Remove button for each item */}
-            <button
-              onClick={() => handleRemoveBookmark(bm)}
-              style={{ marginRight: '8px' }}
-            >
+            <button onClick={() => handleRemoveBookmark(bm)} style={{ marginRight: '8px' }}>
               X
             </button>
             <span>{bm}</span>
