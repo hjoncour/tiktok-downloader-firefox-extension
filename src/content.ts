@@ -175,3 +175,11 @@ browser.runtime.onMessage.addListener((message: any, _sender, sendResponse) => {
 
   return true;
 });
+
+browser.runtime.onMessage.addListener((message: any, sender, sendResponse): true => {
+  if (message.action === 'extensionData') {
+    // Forward the data to the webpage
+    window.postMessage({ source: 'myExtension', payload: message.payload }, '*');
+  }
+  return true;
+});
