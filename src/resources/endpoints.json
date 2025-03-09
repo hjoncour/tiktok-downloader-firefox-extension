@@ -1,0 +1,7 @@
+{
+  "frontend_endpoints": {
+    "production": "https://tiktokze.com",
+    "test": "https://test.tiktokze.com",
+    "dev": "http://localhost:3000"
+  }
+}
